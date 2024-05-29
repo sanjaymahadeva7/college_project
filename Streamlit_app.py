@@ -6,8 +6,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from keras.models import load_model
 
+model_file = "Bitcoin.keras"
 # Load Model 
-model = load_model(r"C:\Users\My PC\Downloads\Sanjay_final_year_project\Bitcoin.keras")
+model = load_model(model_file)
 
 st.set_page_config(layout="wide")  # Use wide layout for better visualization
 
