@@ -1,5 +1,3 @@
-Here is the edited `README.md` file based on your project details:
-
 # Bitcoin Price Prediction Using LSTM Neural Networks
 
 ## Project Overview
