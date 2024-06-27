@@ -3,5 +3,5 @@ pandas
 plotly
 keras
 scikit-learn
-tensorflow==2.14.0
-numpy==1.21.4
+tensorflow
+numpy
