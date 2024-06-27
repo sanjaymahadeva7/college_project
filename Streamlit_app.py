@@ -5,6 +5,7 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 from keras.models import load_model
+from sklearn.metrics import mean_squared_error, mean_absolute_error
 
 model_file = "Bitcoin.keras"
 # Load Model 
@@ -60,68 +61,127 @@ fig = px.line(data_chart, x=data_chart.index, y='Close', title='Bitcoin Price Ov
 st.plotly_chart(fig)
 
 # Split data
-train_data = data_chart[:-100]
-test_data = data_chart[-200:]
+train_data = data[:-500]
+test_data = data[-500:]
 
-# Scaling data
-scaler = MinMaxScaler(feature_range=(0,1))
-train_data_scale = scaler.fit_transform(train_data)
-test_data_scale = scaler.transform(test_data)
+train_values = train_data['Close'].values.reshape(-1, 1)
+test_values = test_data['Close'].values.reshape(-1, 1)
 
-# Preparing data for prediction
-base_days = 100
-x = []
-y = []
-for i in range(base_days, len(test_data_scale)):
-    x.append(test_data_scale[i-base_days:i])
-    y.append(test_data_scale[i, 0])
+# Initialize MinMaxScaler
+scaler = MinMaxScaler()
 
-x, y = np.array(x), np.array(y)
-x = np.reshape(x, (x.shape[0], x.shape[1], 1))
+train_values_scaled = scaler.fit_transform(train_values)
+test_values_scaled = scaler.transform(test_values)
 
-st.write(f"x shape: {x.shape}")
-st.write(f"y shape: {y.shape}")
+train_data['Close_scaled'] = train_values_scaled
+test_data['Close_scaled'] = test_values_scaled
 
-# Predicting
-st.subheader("Predicted vs Original Prices")
-pred = model.predict(x)
-pred = scaler.inverse_transform(pred)
-preds = pred.reshape(-1, 1)
-ys = scaler.inverse_transform(y.reshape(-1, 1))
+def create_sequences(data, seq_length):
+    X, y = [], []
+    for i in range(len(data) - seq_length):
+        seq_end = i + seq_length
+        X.append(data[i:seq_end])
+        y.append(data[seq_end])
+    return np.array(X), np.array(y)
 
-# Creating DataFrames for plotting
-preds_df = pd.DataFrame(preds, columns=["Predicted Price"])
-ys_df = pd.DataFrame(ys, columns=["Original Price"])
+seq_length = 40
 
-# Plotting predictions vs original prices
-fig_pred = go.Figure()
-fig_pred.add_trace(go.Scatter(x=preds_df.index, y=preds_df["Predicted Price"], mode='lines', name='Predicted'))
-fig_pred.add_trace(go.Scatter(x=ys_df.index, y=ys_df["Original Price"], mode='lines', name='Original'))
-fig_pred.update_layout(title='Predicted vs Original Bitcoin Prices', xaxis_title='Days', yaxis_title='Price')
-st.plotly_chart(fig_pred)
+# Create sequences for training and testing sets
+X_train, y_train = create_sequences(train_values_scaled, seq_length)
+X_test, y_test = create_sequences(test_values_scaled, seq_length)
+
+# Reshape X_train and X_test to be 3-dimensional (samples, time steps, features)
+X_train = X_train.reshape(X_train.shape[0], seq_length, 1)
+X_test = X_test.reshape(X_test.shape[0], seq_length, 1)
+
+# Predictions and errors
+predictions_scaled = model.predict(X_test)
+predictions = scaler.inverse_transform(predictions_scaled)
+
+y_test_inverse = scaler.inverse_transform(y_test)
+
+
+st.subheader('Actual vs. Predicted Closing Prices')
+fig_actual_vs_pred = go.Figure()
+fig_actual_vs_pred.add_trace(go.Scatter(x=np.arange(len(y_test_inverse)), y=y_test_inverse.flatten(), mode='lines', name='Actual'))
+fig_actual_vs_pred.add_trace(go.Scatter(x=np.arange(len(predictions)), y=predictions.flatten(), mode='lines', name='Predicted'))
+fig_actual_vs_pred.update_layout(title='Actual vs. Predicted Closing Prices', xaxis_title='Time Steps', yaxis_title='Closing Price')
+st.plotly_chart(fig_actual_vs_pred)
 
 # Future prediction
 st.sidebar.subheader('Future Prediction Settings')
-future_days = st.sidebar.slider("Select number of future days to predict:", min_value=1, max_value=30, value=5)
+future_days = st.sidebar.slider("Select number of future days to predict:", min_value=1, max_value=50, value=5)
 
-m = y
-z = []
-for i in range(base_days, len(m) + future_days):
-    m = m.reshape(-1, 1)
-    inter = [m[-base_days:, 0]]
-    inter = np.array(inter)
-    inter = np.reshape(inter, (inter.shape[0], inter.shape[1], 1))
-    pred = model.predict(inter)
-    z = np.append(z, pred)
+future_predictions = []
 
-# Display future predictions
-st.subheader("Future Days Prediction")
-z = np.array(z)
-z = scaler.inverse_transform(z.reshape(-1, 1))
+initial_input = X_test[-1]
 
-future_df = pd.DataFrame(z, columns=["Future Predicted Price"])
-fig_future = px.line(future_df, y='Future Predicted Price', title='Future Bitcoin Prices Prediction')
+current_input = initial_input
+
+for _ in range(future_days):
+    current_input = current_input.reshape(1, seq_length, 1)
+    next_pred = model.predict(current_input)
+    future_predictions.append(next_pred[0, 0])
+    current_input = np.roll(current_input, -1, axis=1)
+    current_input[0, -1, 0] = next_pred
+
+future_predictions = np.array(future_predictions).reshape(-1, 1)
+future_predictions_inverse = scaler.inverse_transform(future_predictions).flatten()
+
+future_indices = np.arange(len(y_test_inverse), len(y_test_inverse) + future_days)
+
+# Plotting future predictions
+st.subheader('Future Bitcoin Price Predictions')
+fig_future = go.Figure()
+
+# Adding shaded area for future predictions
+fig_future.add_trace(go.Scatter(
+    x=np.arange(len(y_test_inverse)), y=y_test_inverse.flatten(),
+    mode='lines', name='Actual', line=dict(color='royalblue')
+))
+fig_future.add_trace(go.Scatter(
+    x=future_indices, y=future_predictions_inverse,
+    mode='lines+markers', name='Future Predictions',
+    line=dict(color='firebrick', dash='dash'),
+    marker=dict(size=6, color='firebrick', symbol='circle')
+))
+
+# Add shaded area
+fig_future.add_trace(go.Scatter(
+    x=np.concatenate([future_indices, future_indices[::-1]]),
+    y=np.concatenate([future_predictions_inverse, np.zeros_like(future_predictions_inverse)]),
+    fill='toself',
+    fillcolor='rgba(255, 182, 193, 0.2)',
+    line=dict(color='rgba(255, 182, 193, 0)')
+))
+
+# Annotations
+fig_future.add_annotation(
+    x=future_indices[-1], y=future_predictions_inverse[-1],
+    text=f'Prediction: {future_predictions_inverse[-1]:.2f}',
+    showarrow=True, arrowhead=1, ax=-40, ay=-40
+)
+
+fig_future.update_layout(
+    title='Actual vs. Future Bitcoin Prices',
+    xaxis_title='Time Steps',
+    yaxis_title='Closing Price',
+    showlegend=True,
+    legend=dict(
+        orientation='h',
+        yanchor='bottom',
+        y=1.02,
+        xanchor='right',
+        x=1
+    ),
+    plot_bgcolor='black',
+    paper_bgcolor='black',
+    font=dict(color='white')
+)
+fig_future.update_xaxes(showgrid=False, color='white')
+fig_future.update_yaxes(showgrid=False, color='white')
+
 st.plotly_chart(fig_future)
 
 # Footer
-st.sidebar.markdown("Developed by [sanjay](https://www.linkedin.com/in/sanjaymahadeva7/)")
+st.sidebar.markdown("Developed by [Sanjay](https://www.linkedin.com/in/sanjaymahadeva7/)")
