@@ -1,7 +1,7 @@
 streamlit
 pandas
-numpy==1.21.4
 plotly
 keras
-tensorflow
 scikit-learn
+tensorflow==2.14.0
+numpy==1.21.4
